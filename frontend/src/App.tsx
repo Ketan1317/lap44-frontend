@@ -544,7 +544,7 @@ const F1RacingGame: React.FC = () => {
     loadTrack();
 
     // Connect socket.io client
-    const url = (import.meta as any).env.VITE_SOCKET_URL || 'http://localhost:3001';
+    const url = "https://lap44-frontend.onrender.com/";
     console.log('Connecting to socket server:', url);
     const s = io(url, { 
       transports: ['websocket', 'polling'],
