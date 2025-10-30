@@ -185,6 +185,7 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
       socket.off('playerMoved', onPlayerMoved);
       socket.off('playerDisconnected', onPlayerDisconnected);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, carGltf, scene, playerId]);
 
   useEffect(() => {
