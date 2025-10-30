@@ -148,7 +148,7 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
       setPlayerCount(prev => prev + 1);
     };
 
-    const onPlayerMoved = ({ id, state, t }: any) => {
+    const onPlayerMoved = ({ id, state }: any) => {
       if (id === playerId || id === socket?.id) return;
       
       // Ensure remote car exists (in case we missed playerJoined event)
@@ -276,7 +276,7 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
     return clampedPos;
   };
 
-  useFrame((state, delta) => {
+  useFrame(() => {
     if (!carRef.current) return;
 
     if (!computedRef.current && trackRef.current) {
@@ -368,8 +368,8 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
           0,
           moveDirection.z
         );
-        const dotProduct = velocityVec.dot(normal);
-        const reflection = velocityVec.sub(normal.multiplyScalar(2 * dotProduct));
+        // const dotProduct = velocityVec.dot(normal);
+        // const reflection = velocityVec.sub(normal.multiplyScalar(2 * dotProduct));
         
         // Apply bounce with energy loss
         carState.speed *= -0.4;
