@@ -85,7 +85,7 @@ const F1RacingGame: React.FC = () => {
     loadCar();
     loadTrack();
 
-    const url = 'https://lap44-backend-1.onrender.com/';
+    const url = import.meta.env.VITE_SOCKET_URL;
     const s = io(url, { transports: ['websocket'], reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 5 });
     setSocket(s);
 
