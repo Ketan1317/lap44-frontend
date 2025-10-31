@@ -4,13 +4,19 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three-stdlib';
 import { io } from 'socket.io-client';
 
-const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }: { 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Throttle rates
+const FRAME_STEP_MS = 33; // ~30 FPS simulation/render update cadence
+const NET_STEP_MS = 50;   // 20 Hz network updates
+
+const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount, gameOver }: { 
   carGltf: any; 
   trackGltf: any; 
   keysRef: React.MutableRefObject<any>; 
   socket: any; 
   playerId: string;
   setPlayerCount: React.Dispatch<React.SetStateAction<number>>;
+  gameOver: boolean;
 }) => {
   const carRef = useRef<THREE.Group>(null);
   const trackRef = useRef<THREE.Group>(null);
@@ -31,30 +37,50 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
     minZ: -50,
     maxZ: 50,
   });
-  const carStateRef = useRef({
-    position: new THREE.Vector3(0, 0, 20),
-    velocity: new THREE.Vector3(0, 0, 0),
-    rotation: 0,
-    speed: 0,
-    maxSpeed: 1.0,
-    acceleration: 0.05,
-    deceleration: 0.04,
-    brakingForce: 0.08,
-    turnSpeed: 0.04,
-    friction: 0.97,
-    driftFactor: 0.92,
-    grip: 0.95,
-    lateralVelocity: 0,
-    isDrifting: false,
-    mass: 1.0,
-    drag: 0.002,
-    initialized: false,
-  });
+  const DEFAULT_TRACK = {
+    start: { x: 32.4, z: -89.92, rot: 4.494 },
+    finish: { x: -68.04, z: -123.14, rot: 4.439 },
+  };
+  const [trackConfig, setTrackConfig] = useState<any>(DEFAULT_TRACK);
+// Car Physics Configuration
+const carStateRef = useRef({
+  position: new THREE.Vector3(0, 0, 0),           // will be set by server init
+  velocity: new THREE.Vector3(0, 0, 0),           // current velocity
+  rotation: 0,                                    // will be set by server init
+  speed: 0,                                       // current forward speed
+
+  // --- Core Motion ---
+  maxSpeed: 2.5,
+  acceleration: 0.05,
+  deceleration: 0.03,
+  brakingForce: 0.12,
+  turnSpeed: 0.045,
+
+  // --- Physics Fine-Tuning ---
+  friction: 0.96,
+  driftFactor: 0.88,
+  grip: 0.93,
+  lateralVelocity: 0,
+
+  // --- Dynamics ---
+  isDrifting: false,
+  mass: 1.0,
+  drag: 0.0015,
+  tractionControl: 0.85,
+  steeringSmoothing: 0.15,
+  stability: 0.94,
+
+  // --- State ---
+  initialized: false,
+});
+
   const cameraOffsetRef = useRef(new THREE.Vector3(0, 5, -10));
   const cameraLookOffsetRef = useRef(new THREE.Vector3(0, 1, 5));
   const { scene, camera } = useThree();
   const computedRef = useRef(false);
-  const lastUpdateRef = useRef(Date.now());
+  const lastNetUpdateRef = useRef(Date.now());
+  const frameAccumulatorRef = useRef(0);
+  const lastLogRef = useRef(0);
 
   useEffect(() => {
     scene.background = new THREE.Color(0x87ceeb);
@@ -86,6 +112,7 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
           if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
+            child.frustumCulled = false; // ensure always visible in frustum
             if (child.material && child.material.clone) {
               child.material = child.material.clone();
               // Make remote cars different color
@@ -116,11 +143,15 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
       }
     };
 
-    const onInit = (payload: any) => {
+  const onInit = (payload: any) => {
       console.log('Received init event:', payload);
-      const { id, players } = payload || {};
+      const { id, players, track } = payload || {};
       console.log('My ID:', id);
       console.log('All players:', players);
+      if (track) {
+        console.log('Track config:', track);
+        setTrackConfig(track);
+      }
       
       setPlayerCount(Object.keys(players || {}).length);
       
@@ -149,14 +180,25 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
     };
 
     const onPlayerMoved = ({ id, state }: any) => {
-      if (id === playerId || id === socket?.id) return;
+      // Authoritative echo for self
+      if (id === socket?.id) {
+        if (state?.position && typeof state.rotation === 'number') {
+          carStateRef.current.position.set(state.position.x, 0, state.position.z);
+          carStateRef.current.rotation = state.rotation;
+          if (carRef.current) {
+            carRef.current.position.set(state.position.x, 0, state.position.z);
+            carRef.current.rotation.y = state.rotation;
+          }
+        }
+        return;
+      }
       
       // Ensure remote car exists (in case we missed playerJoined event)
       ensureRemoteCar(id, state);
       
       const entry = remoteCarStatesRef.current.get(id);
       if (entry && state?.position && typeof state.rotation === 'number') {
-        // Directly update target position and rotation
+        // Directly update target position and rotation from BACKEND payload (authoritative)
         entry.targetPos.set(state.position.x, 0, state.position.z);
         entry.targetRot = state.rotation;
         entry.lastUpdate = Date.now();
@@ -277,8 +319,20 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
     return clampedPos;
   };
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!carRef.current) return;
+    if (gameOver) {
+      // Freeze local updates when game is over
+      return;
+    }
+
+    // Throttle update cadence to lower FPS
+    frameAccumulatorRef.current += delta * 1000;
+    if (frameAccumulatorRef.current < FRAME_STEP_MS) {
+      return;
+    }
+    // If more time elapsed, process only one step to keep cadence stable
+    frameAccumulatorRef.current = 0;
 
     if (!computedRef.current && trackRef.current) {
       // Fallback computation if useEffect missed
@@ -399,10 +453,17 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
       carRef.current.rotation.y = carState.rotation;
     }
 
-    // Emit movement at ~60 Hz for maximum accuracy
+    // Emit movement throttled to NET_STEP_MS (authoritative coordinates distributed by server)
     const now = Date.now();
-    if (socket && socket.connected && playerId && socket.id && now - lastUpdateRef.current > 16) {
-      lastUpdateRef.current = now;
+
+    // Live console logging of local car coordinates (x, z, rotation)
+    if (now - lastLogRef.current >= 100) { // ~10 logs/sec for readability
+      console.log(`Car: x=${carState.position.x.toFixed(2)}, z=${carState.position.z.toFixed(2)}, rot=${carState.rotation.toFixed(3)}`);
+      lastLogRef.current = now;
+    }
+
+    if (socket && socket.connected && playerId && socket.id && now - lastNetUpdateRef.current >= NET_STEP_MS) {
+      lastNetUpdateRef.current = now;
       socket.emit('playerMove', {
         id: socket.id,
         position: { x: carState.position.x, y: carState.position.y, z: carState.position.z },
@@ -458,10 +519,38 @@ const Scene = ({ carGltf, trackGltf, keysRef, socket, playerId, setPlayerCount }
           object={carGltf.scene}
           ref={carRef}
           scale={1.3}
-          position={[0, 0, 20]}
+          position={[carStateRef.current.position.x, 0, carStateRef.current.position.z]}
         />
       )}
       {trackGltf && <primitive object={trackGltf.scene} ref={trackRef} scale={1} position={[0, 0, 0]} />}
+      {trackConfig && (
+        <group>
+          {/* Compute dynamic width to cover track */}
+          {(() => {
+            const b = trackBoundariesRef.current;
+            const width = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) + 10; // pad to ensure full cover
+            const thickness = 1.2;
+            return (
+              <>
+                {/* Start Line - Green */}
+                <group position={[trackConfig.start.x, 0.03, trackConfig.start.z]}>
+                  <mesh renderOrder={10} rotation={[-Math.PI / 2, trackConfig.start.rot, 0]}>
+                    <planeGeometry args={[width, thickness]} />
+                    <meshStandardMaterial color={'#00ff00'} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
+                  </mesh>
+                </group>
+                {/* Finish Line - Blue */}
+                <group position={[trackConfig.finish.x, 0.03, trackConfig.finish.z]}>
+                  <mesh renderOrder={10} rotation={[-Math.PI / 2, trackConfig.finish.rot, 0]}>
+                    <planeGeometry args={[width, thickness]} />
+                    <meshStandardMaterial color={'#0080ff'} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
+                  </mesh>
+                </group>
+              </>
+            );
+          })()}
+        </group>
+      )}
     </>
   );
 };
@@ -474,6 +563,10 @@ const F1RacingGame: React.FC = () => {
   const [socket, setSocket] = useState<any>(null);
   const [playerId, setPlayerId] = useState<string>('');
   const [playerCount, setPlayerCount] = useState<number>(0);
+  const [gameOver, setGameOver] = useState<boolean>(false);
+  const [winnerId, setWinnerId] = useState<string>('');
+  const [laps, setLaps] = useState<number>(0);
+  const TOTAL_LAPS = 3;
   const keysRef = useRef({
     w: false,
     a: false,
@@ -545,7 +638,7 @@ const F1RacingGame: React.FC = () => {
     loadTrack();
 
     // Connect socket.io client
-    const url = "https://lap44-frontend.onrender.com/";
+    const url = "http://localhost:3001";
     console.log('Connecting to socket server:', url);
     const s = io(url, { 
       transports: ['websocket', 'polling'],
@@ -571,12 +664,35 @@ const F1RacingGame: React.FC = () => {
     const onInit = ({ id }: any) => {
       console.log('Received init with ID:', id);
       setPlayerId(id);
+      setGameOver(false);
+      setWinnerId('');
+      setLaps(0);
+    };
+
+    const onRoomFull = ({ max }: any) => {
+      console.warn('Room full, max players:', max);
+      setError(`Room is full (max ${max}). Please try again later.`);
+    };
+
+    const onWinner = ({ id }: any) => {
+      console.log('Winner announced:', id);
+      setWinnerId(id);
+      setGameOver(true);
+    };
+
+    const onLapUpdate = ({ id, laps }: any) => {
+      if (id === s.id) {
+        setLaps(laps);
+      }
     };
     
     s.on('connect', onConnect);
     s.on('disconnect', onDisconnect);
     s.on('connect_error', onConnectError);
     s.on('init', onInit);
+    s.on('roomFull', onRoomFull);
+    s.on('winner', onWinner);
+    s.on('lapUpdate', onLapUpdate);
 
     return () => {
       mounted = false;
@@ -584,6 +700,9 @@ const F1RacingGame: React.FC = () => {
       s.off('disconnect', onDisconnect);
       s.off('connect_error', onConnectError);
       s.off('init', onInit);
+      s.off('roomFull', onRoomFull);
+      s.off('winner', onWinner);
+      s.off('lapUpdate', onLapUpdate);
       s.disconnect();
     };
   }, []);
@@ -596,7 +715,7 @@ const F1RacingGame: React.FC = () => {
         style={{ width: '100%', height: '100%' }}
         frameloop="always"
         dpr={[1, 1]}
-        performance={{ min: 0.5, max: 1 }}
+        performance={{ min: 0.4, max: 0.9 }}
         gl={{
           powerPreference: 'high-performance',
           antialias: false,
@@ -612,6 +731,7 @@ const F1RacingGame: React.FC = () => {
             socket={socket}
             playerId={playerId}
             setPlayerCount={setPlayerCount}
+            gameOver={gameOver}
           />
         )}
       </Canvas>
@@ -672,8 +792,27 @@ const F1RacingGame: React.FC = () => {
         <div>A / ← - Turn Left</div>
         <div>D / → - Turn Right</div>
         <div style={{ marginTop: '10px', fontSize: '12px', opacity: 0.8 }}>Player ID: {playerId || 'Connecting...'}</div>
-        <div style={{ fontSize: '12px', opacity: 0.8 }}>Players: {playerCount}</div>
+        <div style={{ fontSize: '12px', opacity: 0.8 }}>Players: {playerCount}/3</div>
+        <div style={{ marginTop: '6px', fontSize: '14px' }}>Lap: {Math.min(laps + 1, TOTAL_LAPS)}/{TOTAL_LAPS}</div>
       </div>
+      {gameOver && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            background: 'rgba(0, 128, 0, 0.9)',
+            color: 'white',
+            padding: '30px 50px',
+            borderRadius: '10px',
+            fontSize: '24px',
+            fontFamily: 'Arial, sans-serif',
+          }}
+        >
+          Winner: {winnerId}
+        </div>
+      )}
     </div>
   );
 };
