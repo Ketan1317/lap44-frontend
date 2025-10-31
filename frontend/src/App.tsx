@@ -50,11 +50,11 @@ const carStateRef = useRef({
   speed: 0,                                       // current forward speed
 
   // --- Core Motion ---
-  maxSpeed: 2.5,
+  maxSpeed: 2.4,
   acceleration: 0.05,
   deceleration: 0.03,
   brakingForce: 0.12,
-  turnSpeed: 0.045,
+  turnSpeed: 0.05,
 
   // --- Physics Fine-Tuning ---
   friction: 0.96,
@@ -106,7 +106,6 @@ const carStateRef = useRef({
     const ensureRemoteCar = (id: string, state: any) => {
       if (!id || id === playerId || id === socket.id) return; // don't create for self
       if (!remoteCarsRef.current.has(id)) {
-        console.log(`Creating remote car for player ${id}`, state);
         const clone = carGltf.scene.clone(true);
         clone.traverse((child: any) => {
           if (child.isMesh) {
@@ -264,7 +263,6 @@ const carStateRef = useRef({
           }
         }
       });
-      console.log(`Found ${boundaryBoxesRef.current.length} collision boxes`);
       const trackBBox = new THREE.Box3().setFromObject(trackRef.current);
       const padding = 5;
       trackBoundariesRef.current = {
@@ -273,7 +271,6 @@ const carStateRef = useRef({
         minZ: trackBBox.min.z - padding,
         maxZ: trackBBox.max.z + padding,
       };
-      console.log('Track boundaries:', trackBoundariesRef.current);
       computedRef.current = true;
     }
   }, [trackGltf]);
@@ -456,11 +453,7 @@ const carStateRef = useRef({
     // Emit movement throttled to NET_STEP_MS (authoritative coordinates distributed by server)
     const now = Date.now();
 
-    // Live console logging of local car coordinates (x, z, rotation)
-    if (now - lastLogRef.current >= 100) { // ~10 logs/sec for readability
-      console.log(`Car: x=${carState.position.x.toFixed(2)}, z=${carState.position.z.toFixed(2)}, rot=${carState.rotation.toFixed(3)}`);
-      lastLogRef.current = now;
-    }
+   
 
     if (socket && socket.connected && playerId && socket.id && now - lastNetUpdateRef.current >= NET_STEP_MS) {
       lastNetUpdateRef.current = now;
@@ -523,34 +516,7 @@ const carStateRef = useRef({
         />
       )}
       {trackGltf && <primitive object={trackGltf.scene} ref={trackRef} scale={1} position={[0, 0, 0]} />}
-      {trackConfig && (
-        <group>
-          {/* Compute dynamic width to cover track */}
-          {(() => {
-            const b = trackBoundariesRef.current;
-            const width = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) + 10; // pad to ensure full cover
-            const thickness = 1.2;
-            return (
-              <>
-                {/* Start Line - Green */}
-                <group position={[trackConfig.start.x, 0.03, trackConfig.start.z]}>
-                  <mesh renderOrder={10} rotation={[-Math.PI / 2, trackConfig.start.rot, 0]}>
-                    <planeGeometry args={[width, thickness]} />
-                    <meshStandardMaterial color={'#00ff00'} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
-                  </mesh>
-                </group>
-                {/* Finish Line - Blue */}
-                <group position={[trackConfig.finish.x, 0.03, trackConfig.finish.z]}>
-                  <mesh renderOrder={10} rotation={[-Math.PI / 2, trackConfig.finish.rot, 0]}>
-                    <planeGeometry args={[width, thickness]} />
-                    <meshStandardMaterial color={'#0080ff'} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
-                  </mesh>
-                </group>
-              </>
-            );
-          })()}
-        </group>
-      )}
+      
     </>
   );
 };
