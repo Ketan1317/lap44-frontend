@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 import React, { useEffect, useRef, useState, Suspense, lazy } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { GLTFLoader } from 'three-stdlib';
@@ -22,7 +23,7 @@ const F1RacingGame: React.FC = () => {
   const [racePhase, setRacePhase] = useState<'lobby'|'countdown'|'racing'|'ended'>('lobby');
   const [countdown, setCountdown] = useState<number>(0);
   const [raceEndAt, setRaceEndAt] = useState<number>(0);
-  const [timeLeftMs, setTimeLeftMs] = useState<number>(0);
+  const [, setTimeLeftMs] = useState<number>(0);
   const keysRef = useRef({
     w: false, a: false, s: false, d: false,
     ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false,
@@ -31,7 +32,7 @@ const F1RacingGame: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key in keysRef.current) {
-        // @ts-ignore
+        // @ts-expect-error
         keysRef.current[e.key] = true;
         e.preventDefault();
       }
@@ -64,7 +65,7 @@ const F1RacingGame: React.FC = () => {
           if (modelsLoaded === 2) setLoading(false);
         }
       } catch (err) {
-        setError('Failed to load car model. Please ensure car.glb exists in /public/models/');
+        setError('Failed to load car model. Please ensure car.glb exists in /public/models/' + err);
         setLoading(false);
       }
     };
@@ -77,20 +78,20 @@ const F1RacingGame: React.FC = () => {
           if (modelsLoaded === 2) setLoading(false);
         }
       } catch (err) {
-        setError('Failed to load track model. Please ensure track.glb exists in /public/models/');
+        setError('Failed to load track model. Please ensure track.glb exists in /public/models/'+err);
         setLoading(false);
       }
     };
     loadCar();
     loadTrack();
 
-    const url = 'http://localhost:3001';
+    const url = 'https://lap44-backend-1.onrender.com/';
     const s = io(url, { transports: ['websocket'], reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 5 });
     setSocket(s);
 
     const onConnect = () => setPlayerId(s.id || '');
     const onDisconnect = () => {};
-    const onConnectError = (_: any) => {};
+    const onConnectError = () => {};
     const onInit = ({ id }: any) => {
       setPlayerId(id);
       setGameOver(false);
@@ -136,40 +137,87 @@ const F1RacingGame: React.FC = () => {
   }, [raceEndAt]);
 
   return (
-    <div style={{ width: '100%', height: '100vh', margin: 0, padding: 0, overflow: 'hidden' }}>
-      <Canvas shadows camera={{ fov: 75, near: 0.1, far: 1000 }} style={{ width: '100%', height: '100%' }} frameloop="always" dpr={[1, 1]} performance={{ min: 0.4, max: 0.9 }} gl={{ powerPreference: 'high-performance', antialias: false, stencil: false, depth: true }}>
-<Suspense fallback={null}>
-          {carGltf && trackGltf && socket && (
-            <Scene carGltf={carGltf} trackGltf={trackGltf} keysRef={keysRef} socket={socket} playerId={playerId} setPlayerCount={setPlayerCount} gameOver={gameOver} />
-          )}
-        </Suspense>
-      </Canvas>
-      {racePhase === 'countdown' && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '20px 28px', borderRadius: 10, fontSize: 40 }}>Starting in {countdown}</div>
+   <div className="relative w-full h-screen overflow-hidden bg-black">
+  <Canvas
+    shadows
+    camera={{ fov: 75, near: 0.1, far: 1000 }}
+    frameloop="always"
+    dpr={[1, 1]}
+    performance={{ min: 0.4, max: 0.9 }}
+    gl={{ powerPreference: 'high-performance', antialias: false, stencil: false, depth: true }}
+    className="w-full h-full"
+  >
+    <Suspense fallback={null}>
+      {carGltf && trackGltf && socket && (
+        <Scene
+          carGltf={carGltf}
+          trackGltf={trackGltf}
+          keysRef={keysRef}
+          socket={socket}
+          playerId={playerId}
+          setPlayerCount={setPlayerCount}
+          gameOver={gameOver}
+        />
       )}
-      {raceEndAt > 0 && (
-        <div style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(0,0,0,0.7)', color: '#fff', padding: '8px 14px', borderRadius: 8, fontSize: 20, fontFamily: 'monospace' }}>{new Date(Math.max(0, raceEndAt - Date.now())).toISOString().substring(14, 19)}</div>
-      )}
-      {loading && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(0, 0, 0, 0.8)', color: 'white', padding: '30px 50px', borderRadius: '10px', fontSize: '24px' }}>Loading F1 Racing Game...</div>
-      )}
-      {error && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(200, 0, 0, 0.9)', color: 'white', padding: '30px 50px', borderRadius: '10px', fontSize: '18px', maxWidth: '600px', textAlign: 'center' }}>{error}</div>
-      )}
-      <div style={{ position: 'absolute', top: '20px', left: '20px', background: 'rgba(0, 0, 0, 0.7)', color: 'white', padding: '15px 20px', borderRadius: '8px', fontSize: '14px' }}>
-        <div style={{ marginBottom: '10px', fontSize: '18px', fontWeight: 'bold' }}>Controls</div>
-        <div>W / ↑ - Accelerate</div>
-        <div>S / ↓ - Brake / Reverse</div>
-        <div>A / ← - Turn Left</div>
-        <div>D / → - Turn Right</div>
-        <div style={{ marginTop: '10px', fontSize: '12px', opacity: 0.8 }}>Player ID: {playerId || 'Connecting...'}</div>
-        <div style={{ fontSize: '12px', opacity: 0.8 }}>Players: {playerCount}/3</div>
-        <div style={{ marginTop: '6px', fontSize: '14px' }}>Lap: {Math.min(laps + 1, TOTAL_LAPS)}/{TOTAL_LAPS}</div>
+    </Suspense>
+  </Canvas>
+
+  {/* Countdown Overlay */}
+  {racePhase === 'countdown' && (
+    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="text-5xl md:text-6xl font-bold text-white animate-pulse">
+        Starting in <span className="text-green-400">{countdown}</span>
       </div>
-      {gameOver && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(0, 128, 0, 0.9)', color: 'white', padding: '30px 50px', borderRadius: '10px', fontSize: '24px' }}>Winner: {winnerId}</div>
-      )}
     </div>
+  )}
+
+  {/* Race Timer */}
+  {raceEndAt > 0 && (
+    <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-md text-white font-mono px-4 py-2 rounded-lg text-lg shadow-md border border-white/10">
+      {new Date(Math.max(0, raceEndAt - Date.now())).toISOString().substring(14, 19)}
+    </div>
+  )}
+
+  {/* Loading Screen */}
+  {loading && (
+    <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <div className="text-white text-2xl md:text-3xl font-semibold px-8 py-6 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 shadow-xl">
+        Loading <span className="text-yellow-300">F1 Racing</span> Game...
+      </div>
+    </div>
+  )}
+
+  {/* Error Popup */}
+  {error && (
+    <div className="absolute inset-0 flex items-center justify-center bg-red-900/90 backdrop-blur-md">
+      <div className="text-white max-w-lg text-center text-lg px-8 py-6 rounded-xl shadow-xl border border-red-400">
+        {error}
+      </div>
+    </div>
+  )}
+
+  {/* Controls Panel */}
+  <div className="absolute top-5 left-5 bg-black/70 backdrop-blur-md text-white px-5 py-4 rounded-xl text-sm md:text-base shadow-md border border-white/10">
+    <div className="text-lg font-bold mb-3 tracking-wide text-green-400">Controls</div>
+    <div>W / ↑ – Accelerate</div>
+    <div>S / ↓ – Brake / Reverse</div>
+    <div>A / ← – Turn Left</div>
+    <div>D / → – Turn Right</div>
+    <div className="mt-3 text-xs opacity-75">Player ID: <span className="text-yellow-300">{playerId || 'Connecting...'}</span></div>
+    <div className="text-xs opacity-75">Players: {playerCount}/3</div>
+    <div className="mt-2 text-sm font-medium">Lap: {Math.min(laps + 1, TOTAL_LAPS)}/{TOTAL_LAPS}</div>
+  </div>
+
+  {/* Game Over */}
+  {gameOver && (
+    <div className="absolute inset-0 flex items-center justify-center bg-green-900/90 backdrop-blur-sm">
+      <div className="text-white text-3xl md:text-4xl font-bold px-10 py-6 rounded-xl shadow-2xl border border-green-400">
+        🏁 Winner: <span className="text-yellow-300">{winnerId}</span>
+      </div>
+    </div>
+  )}
+</div>
+
   );
 };
 
